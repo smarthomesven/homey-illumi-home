@@ -1,0 +1,1 @@
+Connect your illumi Home ledstrips to Homey and use them in your Flows. Note that the LED strip connection is stateless, this means that any state changes from the physical remote or illumi Home mobile app won't get reflected in Homey.

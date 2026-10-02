@@ -1,0 +1,36 @@
+{
+  "id": "com.lxillumi.illumihome",
+  "version": "1.0.0",
+  "compatibility": ">=12.4.0",
+  "sdk": 3,
+  "runtime": "nodejs",
+  "platforms": [
+    "local"
+  ],
+  "name": {
+    "en": "illumi Home"
+  },
+  "description": {
+    "en": "LED strips for everyone"
+  },
+  "category": [
+    "lights"
+  ],
+  "permissions": [
+    "homey:wireless:ble"
+  ],
+  "brandColor": "#4F6DF3",
+  "source": "https://github.com/smarthomesven/homey-illumi-home",
+  "bugs": {
+    "url": "https://github.com/smarthomesven/homey-illumi-home/issues"
+  },
+  "images": {
+    "small": "/assets/images/small.png",
+    "large": "/assets/images/large.png",
+    "xlarge": "/assets/images/xlarge.png"
+  },
+  "author": {
+    "name": "Sven Serlier",
+    "email": "sven@dypodex.com"
+  }
+}
