@@ -6,6 +6,7 @@ const P = require('../../lib/protocol');
 const IDLE_DISCONNECT_MS = 20000;
 const MAX_ATTEMPTS = 6;
 const RETRY_GAP_MS = 100;
+const INACTIVITY_SYNC_MS = 48 * 60 * 60 * 1000;
 
 module.exports = class LedStripDevice extends Homey.Device {
 
@@ -13,6 +14,16 @@ module.exports = class LedStripDevice extends Homey.Device {
     this._peripheral = null;
     this._idleTimer = null;
     this._queue = Promise.resolve();
+    this._lastTimeSync = null;
+    this._inactivityTimer = null;
+    this._deleted = false;
+
+    this._onTimezoneChange = () => {
+      this._lastTimeSync = null;
+      this._syncTime('timezone change');
+    };
+    this.homey.clock.on('timezoneChange', this._onTimezoneChange);
+
 
     if (this.getCapabilityValue('onoff') === null) await this.setCapabilityValue('onoff', false);
     if (this.getCapabilityValue('dim') === null) await this.setCapabilityValue('dim', 1);
@@ -49,6 +60,9 @@ module.exports = class LedStripDevice extends Homey.Device {
   }
 
   async onDeleted() {
+    this._deleted = true;
+    this.homey.clock.removeListener('timezoneChange', this._onTimezoneChange);
+    if (this._inactivityTimer) this.homey.clearTimeout(this._inactivityTimer);
     this._clearIdleTimer();
     await this._disconnect();
   }
@@ -56,7 +70,29 @@ module.exports = class LedStripDevice extends Homey.Device {
   _send(packets) {
     const run = this._queue.then(() => this._sendNow(packets));
     this._queue = run.catch(() => {});
+    run.then(() => this._armInactivityTimer(), () => this._armInactivityTimer());
     return run;
+  }
+
+  async _syncTime(reason) {
+    if (!this._pendingTimeSync()) return;
+    this.log(`Automatic time sync (${reason})`);
+    try {
+      await this._send([]);
+    } catch (err) {
+      this.error(`Automatic time sync (${reason}) failed:`, err.message);
+    }
+  }
+ 
+  _armInactivityTimer() {
+    if (this._deleted) return;
+    if (this._inactivityTimer) this.homey.clearTimeout(this._inactivityTimer);
+    this._inactivityTimer = this.homey.setTimeout(async () => {
+      this._inactivityTimer = null;
+      this._lastTimeSync = null;
+      await this._syncTime('48 h inactivity');
+      this._armInactivityTimer();
+    }, INACTIVITY_SYNC_MS);
   }
 
   async _sendNow(packets) {
@@ -65,7 +101,15 @@ module.exports = class LedStripDevice extends Homey.Device {
       let peripheral = null;
       try {
         peripheral = await this._connect();
-        await this._writeAll(peripheral, packets);
+ 
+        // First command of the (local) day: also sync the strip's clock.
+        const sync = this._pendingTimeSync();
+        await this._writeAll(peripheral, sync ? [...packets, sync.packet] : packets);
+        if (sync) {
+          this._lastTimeSync = sync.dateKey;
+          this.log(`Time synced (${sync.timeZone}): ${sync.dateKey}`);
+        }
+ 
         this._armIdleTimer();
         return;
       } catch (err) {
@@ -76,6 +120,26 @@ module.exports = class LedStripDevice extends Homey.Device {
       }
     }
     throw new Error(`Could not reach the LED strip: ${lastError.message}`);
+  }
+
+  _pendingTimeSync() {
+    try {
+      let timeZone = 'UTC';
+      try {
+        timeZone = this.homey.clock.getTimezone() || 'UTC';
+      } catch (err) {
+        this.error('Could not read Homey timezone, using UTC:', err.message);
+      }
+ 
+      const parts = P.localTimeParts(timeZone);
+      const dateKey = `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
+      if (this._lastTimeSync === dateKey) return null;
+ 
+      return { packet: P.setTime(parts), dateKey, timeZone };
+    } catch (err) {
+      this.error('Time sync skipped:', err.message);
+      return null;
+    }
   }
 
   _writeAll(peripheral, packets) {
